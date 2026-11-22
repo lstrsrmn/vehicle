@@ -36,10 +36,10 @@ vnnlibSolver solverExecutable solverName solverVersion =
 prepareSolverArgs :: PrepareSolverArgs
 prepareSolverArgs metaNetwork queryFile = [queryFile] <> networkArgs
   where
-    networkArgs = flip concatMap metaNetwork $ \(name, info, n) ->
-      concatMap (\i -> networkArg name (networkFilepath info) i) ([1 .. n] :: [Int])
-
-    networkArg name path appIndex = ["--network", layoutAsString (compileNetworkName name appIndex <> "=" <> pretty path)]
+    -- Only the first application of each network needs a file mapping, as
+    -- subsequent applications are declared as `equal-to` the first in the query.
+    networkArgs = flip concatMap metaNetwork $ \(name, info, _) ->
+      ["--network", layoutAsString (compileNetworkName name 1 <> "=" <> pretty (networkFilepath info))]
 
 parseSolverOutput :: ParseSolverOutput
 parseSolverOutput output = do
