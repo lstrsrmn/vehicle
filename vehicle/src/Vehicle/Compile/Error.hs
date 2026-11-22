@@ -19,6 +19,7 @@ module Vehicle.Compile.Error
     ParseLocation,
     MonadCompile,
     BlockingReason (..),
+    Diagnosis (..),
     compilerDeveloperError,
     unsupportedTensorLikeQuantifier,
   )
@@ -66,7 +67,7 @@ data RecordMatch = RecordMatch
     missingFields :: [FieldName],
     extraFields :: [FieldName]
   }
-  deriving (Show)
+  deriving stock (Show)
 
 instance Pretty RecordMatch where
   pretty = pretty . show
@@ -79,14 +80,14 @@ data MissingExplicitArgError builtin = MissingExplicitArgError
     explicitBinder :: Binder builtin,
     nonExplicitArg :: Arg builtin
   }
-  deriving (Show)
+  deriving stock (Show)
 
 data RelevantUseOfIrrelevantVariableError builtin = RelevantUseOfIrrelevantVariableError
   { _proxy :: Proxy builtin,
     _provenance :: Provenance,
     irrelevantVariableName :: Name
   }
-  deriving (Show)
+  deriving stock (Show)
 
 data FunctionTypeMismatchError builtin = FunctionTypeMismatchError
   { _ctx :: NamedBoundCtx,
@@ -94,20 +95,20 @@ data FunctionTypeMismatchError builtin = FunctionTypeMismatchError
     currentExpectedType :: Expr builtin,
     currentUncheckedArgs :: [Arg builtin]
   }
-  deriving (Show)
+  deriving stock (Show)
 
 data FailedUnificationConstraintsError builtin = FailedUnificationConstraintsError
   { _freeCtx :: FreeCtx builtin,
     failedConstraints :: NonEmpty (WithContext (UnificationConstraint builtin))
   }
-  deriving (Show)
+  deriving stock (Show)
 
 data FailedInstanceConstraintError builtin = FailedInstanceConstraintError
   { _freeCtx :: FreeCtx builtin,
     failedConstraint :: WithContext (InstanceConstraint builtin),
     exploredCandidates :: [(WithContext (InstanceCandidate builtin), UnAnnDoc)]
   }
-  deriving (Show)
+  deriving stock (Show)
 
 -- | Errors thrown during type-checking
 data TypingError builtin
@@ -122,7 +123,8 @@ data TypingError builtin
   | UnsolvedMetas (Proxy builtin) (NonEmpty (MetaID, Provenance))
   | InvalidInstanceHead DeclProvenance (Expr builtin)
   | NonTypeClassInstanceHead (Proxy builtin) DeclProvenance Identifier
-  deriving (Show)
+  | QuantifiedIfCondition (ConstraintContext builtin)
+  deriving stock (Show)
 
 --------------------------------------------------------------------------------
 -- MultiPropertyTraveralError
@@ -133,7 +135,7 @@ data MultiPropertyTraveralError
   | UnsupportedTensorDimensions (Thunk Builtin)
   | UnreducableTensorValue (ForcedValue Builtin)
   | UnreducableType (Thunk Builtin)
-  deriving (Show)
+  deriving stock (Show)
 
 type MissingResource = (ExternalResource, DeclProvenance)
 
@@ -165,7 +167,7 @@ data ParseError
   | MissingVariables Provenance Name
   | UnchainableComparisons Provenance ComparisonOp ComparisonOp
   | UnknownSupportsOperation Provenance String
-  deriving (Show)
+  deriving stock (Show)
 
 --------------------------------------------------------------------------------
 -- Compilation errors
@@ -183,10 +185,11 @@ data CompileError
   | DeclarationBoundShadowing Provenance Name
   | MissingRequestedDeclarations (NonEmpty Name)
   | UnmatchedRecord Provenance [FieldName] (Maybe (Identifier, RecordMatch))
-  | -- Type checking errors
+  | -- Type checking errors. The type-checker can report multiple errors at
+    -- once, and so this carries a non-empty list of them.
     forall builtin.
     (Eq builtin, PrintableBuiltin builtin, NormalisableBuiltin builtin, Show builtin) =>
-    TypingError (TypingError builtin)
+    TypingErrors (NonEmpty (TypingError builtin))
   | -- Resource loading errors
     ResourcesNotProvided (NonEmpty MissingResource)
   | ResourceIOError DeclProvenance ExternalResource IOException
@@ -215,14 +218,13 @@ data CompileError
     ZeroFieldTensorLike DeclProvenance
   | -- Query backend
     NoPropertiesFound
-  | UnsupportedAlternatingQuantifiers QueryFormatID DeclProvenance (Either CompileError (Quantifier, Provenance, PolarityProvenance))
+  | UnsupportedAlternatingQuantifiers QueryFormatID DeclProvenance (Diagnosis (Quantifier, Provenance, PolarityProvenance))
   | DuplicateQuantifierNames DeclProvenance Name
-  | UnsupportedNonLinearConstraint QueryFormatID DeclProvenance (Either CompileError NonLinearityProof)
+  | UnsupportedNonLinearConstraint QueryFormatID DeclProvenance (Diagnosis NonLinearityProof)
   | UnsupportedMultipleNetworkApplications QueryFormatID DeclProvenance CompleteNamedBoundCtx [(NetworkName, Thunk Builtin)]
   | VariableSizeTensorQuantification DeclProvenance NamedBoundCtx (UnforcedBinder Builtin) (UnforcedType Builtin)
   | MultiPropertyTraveralError DeclProvenance MultiPropertyTraveralError
   | UnboundedNetworkInputVariables DeclProvenance CompleteNamedBoundCtx (NonEmpty (NetworkName, NetworkIOType, Thunk Builtin, [Lv], UnboundedIndices))
-  | QuantifiedIfCondition (ConstraintContext PolarityBuiltin)
   | -- Loss backend errors
     UnknownDifferentiableLogic Name [Name]
   | UnreducableDifferentiableLogic DeclProvenance
@@ -237,14 +239,26 @@ data CompileError
   | -- Other
     UnsupportedInequality QueryFormatID DeclProvenance
 
-deriving instance Show CompileError
+deriving stock instance Show CompileError
+
+-- | The result of attempting to locate the original source of an error that
+-- was detected during compilation, but whose root cause can only be found by
+-- re-analysing the original program (e.g. with a type-checking subsystem).
+data Diagnosis a
+  = -- | No diagnosis has been attempted yet.
+    Undiagnosed
+  | -- | Diagnosis was attempted but itself failed with the given error.
+    DiagnosisFailed CompileError
+  | -- | Diagnosis succeeded and found the original source.
+    Diagnosed a
+  deriving (Show)
 
 data BlockingReason
   = BlockingNetwork Identifier
   | BlockingDatasetOrParameter Identifier
   | BlockingVar Lv
 
-deriving instance Show BlockingReason
+deriving stock instance Show BlockingReason
 
 --------------------------------------------------------------------------------
 -- Some useful developer errors
@@ -263,7 +277,7 @@ data VehicleUserError a = VehicleUserError
     problem :: a,
     fix :: Maybe a
   }
-  deriving (Generic)
+  deriving stock (Generic)
 
 type VehicleError = VehicleUserError UnAnnDoc
 

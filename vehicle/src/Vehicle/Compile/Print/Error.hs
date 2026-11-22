@@ -8,7 +8,7 @@ module Vehicle.Compile.Print.Error
 where
 
 import Control.Monad.Except (ExceptT, runExceptT)
-import Control.Monad.Identity (Identity)
+import Control.Monad.Identity (Identity (..))
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.List.NonEmpty qualified as NonEmpty
 import Data.Maybe (fromMaybe)
@@ -35,7 +35,6 @@ import Vehicle.Data.DifferentiableLogic (TensorDifferentiableLogicField (..))
 import Vehicle.Data.Tensor (TensorIndices)
 import Vehicle.Data.Variable.Bound.Context.Name
 import Vehicle.Data.Variable.Free.Context (FreeContextT, runFreshFreeContextT)
-import Vehicle.Prelude.Logging (SilentLoggerT, runSilentLogger)
 
 --------------------------------------------------------------------------------
 -- User errors
@@ -367,13 +366,8 @@ formatCompileError = \case
   -- Typing --
   ------------
 
-  TypingError t -> typingErrorDetails t
-  QuantifiedIfCondition ctx ->
-    VehicleUserError
-      { provenance = Just $ provenanceOf ctx,
-        problem = "cannot currently use quantifiers in `if` conditions.",
-        fix = Just $ implementationLimitation Nothing
-      }
+  -- TODO: report all of the errors rather than just the first.
+  TypingErrors (t :| _) -> typingErrorDetails t
   ---------------
   -- Resources --
   ---------------
@@ -511,8 +505,8 @@ formatCompileError = \case
         fix = Just $ datasetDimensionsFix "dimensions" ident file
       }
     where
-      run :: NameBoundContextT (FreeContextT Builtin (SilentLoggerT Identity)) a -> a
-      run = runSilentLogger . runFreshFreeContextT (Proxy @Builtin) . runFreshNameBoundContextT
+      run :: NameBoundContextT (FreeContextT Builtin Identity) a -> a
+      run = runIdentity . runFreshFreeContextT (Proxy @Builtin) . runFreshNameBoundContextT
 
       dimensionsOf :: UnforcedType Builtin -> Maybe Int
       dimensionsOf typ = do
@@ -778,8 +772,9 @@ formatCompileError = \case
     where
       causeDoc :: Doc a
       causeDoc = case cause of
-        Left err -> line <> errorInSubsystemMessage "locate the original source of the alternating quantifiers" err
-        Right (q, pq, pp) ->
+        Undiagnosed -> mempty
+        DiagnosisFailed err -> line <> errorInSubsystemMessage "locate the original source of the alternating quantifiers" err
+        Diagnosed (q, pq, pp) ->
           "In particular:"
             <> line
             <> indent 2 (prettyPolarityProvenance pq q pp)
@@ -801,8 +796,9 @@ formatCompileError = \case
     where
       causeDoc :: Doc a
       causeDoc = case cause of
-        Left err -> line <> errorInSubsystemMessage "locate the original source of the non-linearity" err
-        Right source -> case source of
+        Undiagnosed -> mempty
+        DiagnosisFailed err -> line <> errorInSubsystemMessage "locate the original source of the non-linearity" err
+        Diagnosed source -> case source of
           LinearTimesLinear opProv lhs rhs ->
             "In particular the multiplication in"
               <+> pretty opProv
@@ -1043,19 +1039,6 @@ errorInSubsystemMessage task err =
     <> "Please report this as an issue on Github"
       <+> parens githubIssues
     <> line
-
-githubIssues :: Doc a
-githubIssues = "https://github.com/vehicle-lang/vehicle/issues/"
-
-implementationLimitation :: Maybe Int -> Doc a
-implementationLimitation issue =
-  "This is a limitation of the current implementation rather than a fundamental problem."
-    <+> case issue of
-      Nothing -> "If you would like this to be fixed, please open an issue at" <+> squotes githubIssues
-      Just issueNumber ->
-        "If you would like this to be fixed, please comment at"
-          <+> squotes (githubIssues <+> pretty issueNumber)
-          <> "."
 
 prettyResource :: ExternalResource -> Identifier -> Doc a
 prettyResource resourceType ident =
